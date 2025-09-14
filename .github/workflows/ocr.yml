@@ -1,0 +1,43 @@
+name: OCR Batch with Tesseract
+
+on:
+  workflow_dispatch:
+
+jobs:
+  ocr:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-por poppler-utils qpdf
+
+      - name: Run OCR on input files
+        run: |
+          mkdir -p output/txt
+          mkdir -p output/pdf
+          for f in $(ls input/* | sort); do
+            if [ -f "$f" ]; then
+              base=$(basename "$f")
+              name="${base%.*}"
+              # Gera TXT
+              tesseract "$f" "output/txt/$name" -l por
+              # Gera PDF pesquisável
+              tesseract "$f" "output/pdf/$name" -l por pdf
+            fi
+          done
+
+      - name: Merge PDFs in sequence
+        run: |
+          mkdir -p output/final
+          qpdf --empty --pages output/pdf/*.pdf -- output/final/merged.pdf
+
+      - name: Upload OCR results
+        uses: actions/upload-artifact@v4
+        with:
+          name: ocr-results
+          path: output/
