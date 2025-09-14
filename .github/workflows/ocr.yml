@@ -16,17 +16,29 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y tesseract-ocr tesseract-ocr-por poppler-utils qpdf
 
-      - name: Run OCR on input files
+      - name: Run OCR on input files (images + PDFs)
         run: |
           mkdir -p output/txt
           mkdir -p output/pdf
+          mkdir -p tmp
+
           for f in $(ls input/* | sort); do
-            if [ -f "$f" ]; then
-              base=$(basename "$f")
-              name="${base%.*}"
-              # Gera TXT
+            base=$(basename "$f")
+            name="${base%.*}"
+
+            if [[ "$f" == *.pdf ]]; then
+              # converte PDF em imagens (uma por página)
+              pdftoppm -r 300 "$f" "tmp/${name}" -png
+              for img in tmp/${name}-*.png; do
+                page=$(basename "$img" .png)
+                # gera TXT
+                tesseract "$img" "output/txt/$page" -l por
+                # gera PDF pesquisável
+                tesseract "$img" "output/pdf/$page" -l por pdf
+              done
+            else
+              # é imagem direta
               tesseract "$f" "output/txt/$name" -l por
-              # Gera PDF pesquisável
               tesseract "$f" "output/pdf/$name" -l por pdf
             fi
           done
@@ -35,6 +47,10 @@ jobs:
         run: |
           mkdir -p output/final
           qpdf --empty --pages output/pdf/*.pdf -- output/final/merged.pdf
+
+      - name: Merge TXT in sequence
+        run: |
+          cat output/txt/*.txt > output/final/merged.txt
 
       - name: Upload OCR results
         uses: actions/upload-artifact@v4
