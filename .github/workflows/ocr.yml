@@ -1,4 +1,4 @@
-name: OCR Batch (ocrmypdf + Tesseract, robust)
+name: OCR Batch (preprocess + ocrmypdf)
 
 on:
   workflow_dispatch:
@@ -20,7 +20,7 @@ jobs:
           python3 -m pip install --upgrade pip
           python3 -m pip install ocrmypdf
 
-      - name: Debug: versions & installed langs
+      - name: Debug: versions & langs
         run: |
           echo "=== tesseract version ==="
           tesseract --version
@@ -29,51 +29,55 @@ jobs:
           echo "=== ocrmypdf version ==="
           ocrmypdf --version || true
 
-      - name: Run OCR (PDFs + images)
+      - name: Run OCR with preprocessing
         run: |
-          mkdir -p tmp output/pdf output/txt output/final
-          # process in lexicographic order (use numeric prefixes pra garantir sequência)
+          mkdir -p tmp preproc output/pdf output/txt output/final
           for f in input/*; do
             [ -f "$f" ] || continue
             base=$(basename "$f")
             name="${base%.*}"
             echo ">>> Processing: $base"
 
-            # PDF input
             if [[ "${f,,}" == *.pdf ]]; then
-              echo " - PDF detected: running ocrmypdf"
-              ocrmypdf --force-ocr --deskew --rotate-pages --image-dpi 300 -l por "$f" "tmp/${name}_ocr.pdf"
-              pdftotext "tmp/${name}_ocr.pdf" "output/txt/${name}.txt" || echo "pdftotext failed for ${name}"
-              cp "tmp/${name}_ocr.pdf" "output/pdf/${name}.pdf"
-
-            # Image input (jpg/png/tiff etc)
+              echo " - PDF detected: split into images"
+              pdftoppm -r 300 "$f" "tmp/${name}" -png
+              for img in tmp/${name}-*.png; do
+                page=$(basename "$img" .png)
+                echo "   Preprocessing page: $page"
+                convert "$img" -resize 300% -colorspace Gray -contrast-stretch 0 \
+                  -blur 1x1 -sharpen 0x1 -deskew 40% \
+                  -threshold 50% "preproc/${page}.png"
+                ocrmypdf --force-ocr -l por --image-dpi 300 "preproc/${page}.png" "tmp/${page}_ocr.pdf"
+                pdftotext "tmp/${page}_ocr.pdf" "output/txt/${page}.txt" || true
+                cp "tmp/${page}_ocr.pdf" "output/pdf/${page}.pdf"
+              done
             else
-              echo " - Image detected: converting to PDF + ocrmypdf"
-              # converte imagem para PDF com 300 DPI
-              magick -density 300 "$f" "tmp/${name}.pdf"
-              ocrmypdf --force-ocr --deskew --rotate-pages --image-dpi 300 -l por "tmp/${name}.pdf" "tmp/${name}_ocr.pdf"
-              pdftotext "tmp/${name}_ocr.pdf" "output/txt/${name}.txt" || echo "pdftotext failed for ${name}"
+              echo " - Image detected: preprocessing"
+              convert "$f" -resize 300% -colorspace Gray -contrast-stretch 0 \
+                -blur 1x1 -sharpen 0x1 -deskew 40% \
+                -threshold 50% "preproc/${name}.png"
+              ocrmypdf --force-ocr -l por --image-dpi 300 "preproc/${name}.png" "tmp/${name}_ocr.pdf"
+              pdftotext "tmp/${name}_ocr.pdf" "output/txt/${name}.txt" || true
               cp "tmp/${name}_ocr.pdf" "output/pdf/${name}.pdf"
             fi
           done
 
-      - name: Merge PDFs (preserve order by filename)
+      - name: Merge PDFs (preserve order)
         run: |
           mkdir -p output/final
           qpdf --empty --pages output/pdf/*.pdf -- output/final/merged.pdf || echo "qpdf merge failed"
 
-      - name: Merge TXT (sequence by filename)
+      - name: Merge TXT (sequence)
         run: |
-          # se nao houver txt, cria arquivo vazio
           if ls output/txt/*.txt 1> /dev/null 2>&1; then
             cat output/txt/*.txt > output/final/merged.txt
           else
             echo "" > output/final/merged.txt
           fi
 
-      - name: Show sample of merged text (first 40 lines)
+      - name: Show sample of merged text
         run: |
-          echo "===== merged.txt head ====="
+          echo "===== First 40 lines of merged.txt ====="
           head -n 40 output/final/merged.txt || true
 
       - name: Upload OCR results
