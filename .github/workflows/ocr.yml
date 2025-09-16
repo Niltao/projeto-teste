@@ -1,7 +1,13 @@
 name: OCR Batch (preprocess + ocrmypdf)
 
 on:
+  # permite rodar manualmente pelo botão "Run workflow"
   workflow_dispatch:
+
+  # roda automaticamente quando arquivos novos forem enviados para input/
+  push:
+    paths:
+      - "input/**"
 
 jobs:
   ocr:
